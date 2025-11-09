@@ -236,8 +236,49 @@ if not intervals.empty:
 else:
     st.info("No high probability intervals detected for the selected time period.")
 
-# Calculate statistics for all cauldrons
-st.subheader("📊 Cauldron Interval Analysis")
+st.subheader("Fill Interval Analysis (Oil Level Increasing)")
+
+def detect_fill_intervals(df):
+    intervals = []
+    in_fill = False
+    start_idx = None
+
+    for idx in range(1, len(df)):
+        prev = df.iloc[idx - 1]
+        curr = df.iloc[idx]
+
+        if not in_fill and curr["Oil_Level"] > prev["Oil_Level"]:
+            in_fill = True
+            start_idx = idx - 1
+        elif in_fill and curr["Oil_Level"] <= prev["Oil_Level"]:
+            if start_idx is not None:
+                start_row = df.iloc[start_idx]
+                end_row = df.iloc[idx - 1]
+                duration = (end_row["Time"] - start_row["Time"]).total_seconds() / 60
+                oil_change = end_row["Oil_Level"] - start_row["Oil_Level"]
+                rate = oil_change / duration if duration > 0 else 0
+
+                intervals.append({
+                    "start_time": start_row["Time"],
+                    "end_time": end_row["Time"],
+                    "duration_mins": duration,
+                    "oil_change": oil_change,
+                    "rate_of_change": rate,
+                })
+            in_fill = False
+            start_idx = None
+
+    return pd.DataFrame(intervals) if intervals else pd.DataFrame()
+
+fill_intervals = detect_fill_intervals(cdf)
+
+if not fill_intervals.empty:
+    avg_fill_rate = fill_intervals["rate_of_change"].mean()
+    st.metric("Average Fill Rate (Δy/Δt)", f"{avg_fill_rate:.3f} units/min")
+else:
+    st.metric("Average Fill Rate (Δy/Δt)", "No increase intervals detected (flat data)")
+
+st.subheader("Cauldron Interval Analysis")
 all_cauldron_stats = []
 
 for cauldron in combined['Cauldron_ID'].unique():
