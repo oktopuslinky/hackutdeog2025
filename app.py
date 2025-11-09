@@ -19,7 +19,7 @@ def fetch_api_data():
     try:
         data_json = requests.get(DATA_URL, timeout=5).json()
     except Exception as e:
-        st.warning(f"⚠️ API fetch failed: {e}")
+        st.warning(f"API fetch failed: {e}")
         return pd.DataFrame()
 
     records = []
@@ -234,47 +234,71 @@ if not intervals.empty:
 else:
     st.info("No high probability intervals detected for the selected time period.")
 
-st.subheader("Fill Interval Analysis (Oil Level Increasing)")
+st.subheader("Fill Rate Baseline (from non-drain periods)")
 
-def detect_fill_intervals(df):
-    intervals = []
-    in_fill = False
-    start_idx = None
+def compute_fill_rate_from_non_drain(df, prob_threshold=0.9):
+    if df.empty:
+        return None
 
-    for idx in range(1, len(df)):
-        prev = df.iloc[idx - 1]
-        curr = df.iloc[idx]
+    df = df.sort_values('Time').reset_index(drop=True)
+    df['dt_min'] = df['Time'].diff().dt.total_seconds() / 60.0
+    df['dOil'] = df['Oil_Level'].diff()
+    df['step_rate'] = df['dOil'] / df['dt_min']
 
-        if not in_fill and curr["Oil_Level"] > prev["Oil_Level"]:
-            in_fill = True
-            start_idx = idx - 1
-        elif in_fill and curr["Oil_Level"] <= prev["Oil_Level"]:
-            if start_idx is not None:
-                start_row = df.iloc[start_idx]
-                end_row = df.iloc[idx - 1]
-                duration = (end_row["Time"] - start_row["Time"]).total_seconds() / 60
-                oil_change = end_row["Oil_Level"] - start_row["Oil_Level"]
-                rate = oil_change / duration if duration > 0 else 0
+    non_drain_mask = (df['Prob_Down'] < prob_threshold)
+    valid_steps = non_drain_mask & non_drain_mask.shift(1).fillna(False)
 
-                intervals.append({
-                    "start_time": start_row["Time"],
-                    "end_time": end_row["Time"],
-                    "duration_mins": duration,
-                    "oil_change": oil_change,
-                    "rate_of_change": rate,
-                })
-            in_fill = False
-            start_idx = None
+    if valid_steps.any():
+        return df.loc[valid_steps, 'step_rate'].mean()
+    else:
+        return None
 
-    return pd.DataFrame(intervals) if intervals else pd.DataFrame()
+fill_rate_baseline = compute_fill_rate_from_non_drain(cdf)
 
-fill_intervals = detect_fill_intervals(cdf)
-
-if not fill_intervals.empty:
-    avg_fill_rate = fill_intervals["rate_of_change"].mean()
-    st.metric("Average Fill Rate (Δy/Δt)", f"{avg_fill_rate:.3f} units/min")
+if fill_rate_baseline is None or pd.isna(fill_rate_baseline):
+    st.info("Not enough non-drain data to compute a baseline fill rate.")
 else:
-    st.metric("Average Fill Rate (Δy/Δt)", "No increase intervals detected (flat data)")
+    st.metric("Baseline Fill Rate (non-drain)", f"{fill_rate_baseline:.4f} units/min")
+
+if not intervals.empty:
+    pts = []
+    for _, row in intervals.iterrows():
+        duration = row['duration_mins']
+        net_rate = row['rate_of_change']
+        if fill_rate_baseline is None or pd.isna(fill_rate_baseline):
+            potion_removed = abs(row['oil_change'])
+            est_drain_rate = None
+        else:
+            est_drain_rate = fill_rate_baseline - net_rate
+            if est_drain_rate < 0:
+                est_drain_rate = 0
+            potion_removed = est_drain_rate * duration
+
+        pts.append(potion_removed)
+
+    intervals['potion_removed'] = pts
+
+    formatted_intervals = intervals.assign(
+        start_time=intervals['start_time'].dt.strftime('%Y-%m-%d %H:%M:%S'),
+        end_time=intervals['end_time'].dt.strftime('%Y-%m-%d %H:%M:%S'),
+        potion_removed=intervals['potion_removed']
+    )
+    formatted_intervals = formatted_intervals.round({
+        'duration_mins': 2,
+        'oil_change': 2,
+        'rate_of_change': 3,
+        'avg_probability': 3,
+        'max_probability': 3,
+        'potion_removed': 3
+    })
+
+    st.write("High-probability drain intervals with estimated potion removed:")
+    st.dataframe(formatted_intervals.style.background_gradient(
+        subset=['avg_probability', 'max_probability', 'potion_removed'],
+        cmap='Reds'
+    ))
+else:
+    st.info("No high-probability drain intervals available to compute potion removed.")
 
 st.subheader("Cauldron Interval Analysis")
 all_cauldron_stats = []
