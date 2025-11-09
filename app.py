@@ -16,7 +16,6 @@ st.title("Cauldron Drain Dashboard")
 st.caption("Click 'Refresh Data' to fetch live API readings and update predictions.")
 
 def fetch_api_data():
-    """Fetch live API data, return as flattened DataFrame"""
     try:
         data_json = requests.get(DATA_URL, timeout=5).json()
     except Exception as e:
@@ -114,41 +113,18 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-st.subheader("High-Risk Cauldrons")
-latest_probs = combined.groupby("Cauldron_ID")["Prob_Down"].last().reset_index()
-high_risk = latest_probs[latest_probs["Prob_Down"] > 0.8]
-
-if not high_risk.empty:
-    for _, row in high_risk.iterrows():
-        st.error(f"⚠️ {row['Cauldron_ID']} has {row['Prob_Down']*100:.1f}% drain probability!")
-else:
-    st.success("No high drain risk detected.")
-
-st.subheader("Average Drain Probability by Cauldron")
-summary = (
-    combined.groupby("Cauldron_ID")["Prob_Down"]
-    .mean()
-    .reset_index()
-    .sort_values("Prob_Down", ascending=False)
-)
-fig_bar = px.bar(summary, x="Cauldron_ID", y="Prob_Down", title="Average Drain Probability")
-st.plotly_chart(fig_bar, use_container_width=True)
-
 st.subheader("High Probability Drain Intervals Analysis")
 
 def detect_high_prob_intervals(df, prob_threshold=0.9):
-    """Detect all intervals where drain probability exceeds threshold."""
     intervals = []
     in_interval = False
     start_idx = None
     
     for idx, row in df.iterrows():
         if not in_interval and row['Prob_Down'] >= prob_threshold:
-            # Start of high probability interval
             in_interval = True
             start_idx = idx
         elif in_interval and row['Prob_Down'] < prob_threshold:
-            # End of high probability interval
             if start_idx is not None:
                 start_row = df.loc[start_idx]
                 duration = (row['Time'] - start_row['Time']).total_seconds() / 60  # minutes
@@ -170,7 +146,6 @@ def detect_high_prob_intervals(df, prob_threshold=0.9):
             in_interval = False
             start_idx = None
     
-    # Handle case where interval extends to the end of the data
     if in_interval and start_idx is not None:
         last_row = df.iloc[-1]
         duration = (last_row['Time'] - df.loc[start_idx, 'Time']).total_seconds() / 60
@@ -192,39 +167,45 @@ def detect_high_prob_intervals(df, prob_threshold=0.9):
             
     return pd.DataFrame(intervals) if intervals else pd.DataFrame()
 
-# Analyze high probability intervals for selected cauldron
 intervals = detect_high_prob_intervals(cdf)
 
 if not intervals.empty:
     st.write(f"Found {len(intervals)} high probability intervals for {selected}")
     
-    # Calculate and display statistics
-    avg_rate = intervals['rate_of_change'].mean()
+    mode_series = intervals['rate_of_change'].mode()
+    mode_rate = mode_series.iloc[0] if not mode_series.empty else None
     total_oil_change = intervals['oil_change'].sum()
     avg_duration = intervals['duration_mins'].mean()
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Average Rate of Change", f"{abs(avg_rate):.2f} units/min")
+        rate_display = f"{abs(mode_rate):.3f} units/min" if mode_rate is not None else "N/A"
+        st.metric("Mode Rate of Change", rate_display)
     with col2:
         st.metric("Total Oil Change", f"{abs(total_oil_change):.2f} units")
     with col3:
         st.metric("Avg Interval Duration", f"{avg_duration:.1f} mins")
-    
-    # Display intervals table with color coding
+
     st.write("High Probability Intervals:")
     formatted_intervals = intervals.assign(
         start_time=intervals['start_time'].dt.strftime('%Y-%m-%d %H:%M:%S'),
         end_time=intervals['end_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
-    ).round(2)
+    )
+    formatted_intervals = formatted_intervals.round({
+        'duration_mins': 2,
+        'oil_change': 2,
+        'rate_of_change': 3,
+        'start_level': 2,
+        'end_level': 2,
+        'avg_probability': 3,
+        'max_probability': 3
+    })
     
-    # Add probability color highlighting
     st.dataframe(formatted_intervals.style.background_gradient(
         subset=['avg_probability', 'max_probability'],
         cmap='Reds'
     ))
     
-    # Visualize intervals on timeline
     fig_intervals = px.scatter(
         intervals,
         x='start_time',
@@ -242,7 +223,6 @@ if not intervals.empty:
     )
     st.plotly_chart(fig_intervals, use_container_width=True)
     
-    # Show probability distribution during intervals
     fig_prob_dist = px.box(
         intervals,
         y=['avg_probability', 'max_probability'],
@@ -264,9 +244,11 @@ for cauldron in combined['Cauldron_ID'].unique():
     cauldron_data = combined[combined['Cauldron_ID'] == cauldron]
     cauldron_intervals = detect_high_prob_intervals(cauldron_data)
     if not cauldron_intervals.empty:
+        mode_series = cauldron_intervals['rate_of_change'].mode()
+        mode_rate = mode_series.iloc[0] if not mode_series.empty else None
         all_cauldron_stats.append({
             'Cauldron_ID': cauldron,
-            'Avg_Rate_Change': abs(cauldron_intervals['rate_of_change'].mean()),
+            'Mode_Rate_Change': abs(mode_rate) if mode_rate is not None else None,
             'Total_Intervals': len(cauldron_intervals),
             'Total_Duration': cauldron_intervals['duration_mins'].sum(),
             'Avg_Probability': cauldron_intervals['avg_probability'].mean(),
@@ -276,22 +258,20 @@ for cauldron in combined['Cauldron_ID'].unique():
 if all_cauldron_stats:
     stats_df = pd.DataFrame(all_cauldron_stats)
     
-    # Visualize cauldron statistics
     fig_stats = px.bar(
         stats_df,
         x='Cauldron_ID',
-        y='Avg_Rate_Change',
+        y='Mode_Rate_Change',
         color='Avg_Probability',
         text='Total_Intervals',
         title='Cauldron Interval Statistics',
         labels={
-            'Avg_Rate_Change': 'Average Rate of Change (units/min)',
+            'Mode_Rate_Change': 'Mode Rate of Change (units/min)',
             'Avg_Probability': 'Average Probability'
         }
     )
     st.plotly_chart(fig_stats, use_container_width=True)
     
-    # Display detailed statistics table
     st.write("Detailed Cauldron Statistics:")
     st.dataframe(stats_df.round(3).style.background_gradient(
         subset=['Avg_Probability', 'Max_Probability'],
