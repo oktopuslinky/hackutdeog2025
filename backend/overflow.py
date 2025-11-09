@@ -170,8 +170,6 @@ def build_overflow_intervals(df: pd.DataFrame, prob_threshold: float = 0.5, at_c
     return out[["Cauldron_ID","start_time","end_time","flat_value","avg_probability","max_probability"]]
 
 def fetch_and_build_overflow_intervals(prob_threshold: float = 0.5, at_capacity_only: bool = True) -> pd.DataFrame:
-    """Convenience function to fetch data, compute features and probabilities, and return intervals DF.
-    """
     raw_df = fetch_api_data()
     if raw_df.empty:
         return pd.DataFrame(columns=[
@@ -186,7 +184,9 @@ def fetch_and_build_overflow_intervals(prob_threshold: float = 0.5, at_capacity_
         df["Api_Cap"].notna() & (df["Api_Cap"] > 0), df["Api_Cap"], df["Empirical_Cap"]
     )
     df = compute_overflow_probability(df)
-    build_overflow_intervals(df, prob_threshold=prob_threshold, at_capacity_only=at_capacity_only)
 
+    intervals = build_overflow_intervals(df, prob_threshold=prob_threshold, at_capacity_only=at_capacity_only)
+    
     print("Overflow intervals computed successfully.")  
-    return df
+    
+    return intervals
