@@ -252,7 +252,6 @@ def compute_fill_rate_from_non_drain(df, prob_threshold=0.9):
         return df.loc[valid_steps, 'step_rate'].mean()
     else:
         return None
-
 fill_rate_baseline = compute_fill_rate_from_non_drain(cdf)
 
 if fill_rate_baseline is None or pd.isna(fill_rate_baseline):
@@ -344,3 +343,4 @@ if st.session_state.last_update:
     st.caption(f"Last Updated: {st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')}")
 else:
     st.caption("No data loaded yet.")
+
