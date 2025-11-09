@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo, memo } from "react";
 import {
   LineChart,
   Line,
@@ -25,26 +25,37 @@ interface CauldronTimeSeriesChartProps {
   cauldronId: string;
 }
 
-export const CauldronTimeSeriesChart: React.FC<CauldronTimeSeriesChartProps> = ({
+export const CauldronTimeSeriesChart: React.FC<CauldronTimeSeriesChartProps> = memo(({
   data,
   cauldronId,
 }) => {
-  // Format data for recharts (convert time strings to Date objects for better formatting)
-  const chartData = data.map((d) => {
-    const potionLevel = d.potionLevel ?? d.oilLevel ?? 0;
-    return {
-      ...d,
-      potionLevel,
-      oilLevel: potionLevel, // For backward compatibility
-      timeFormatted: d.timeFormatted || new Date(d.time).toLocaleTimeString([], {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      probDownPercent: d.probDownPercent ?? (d.probDown * 100), // Convert to percentage for display
-    };
-  });
+  // Memoize chart data processing to avoid recalculation on every render
+  // Limit to max 500 data points for better performance
+  const chartData = useMemo(() => {
+    let processedData = data.map((d) => {
+      const potionLevel = d.potionLevel ?? d.oilLevel ?? 0;
+      return {
+        ...d,
+        potionLevel,
+        oilLevel: potionLevel, // For backward compatibility
+        timeFormatted: d.timeFormatted || new Date(d.time).toLocaleTimeString([], {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        probDownPercent: d.probDownPercent ?? (d.probDown * 100), // Convert to percentage for display
+      };
+    });
+    
+    // If we have too many data points, sample them for better performance
+    if (processedData.length > 500) {
+      const step = Math.ceil(processedData.length / 500);
+      processedData = processedData.filter((_, index) => index % step === 0);
+    }
+    
+    return processedData;
+  }, [data]);
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload }: any) => {
@@ -158,5 +169,14 @@ export const CauldronTimeSeriesChart: React.FC<CauldronTimeSeriesChartProps> = (
       </LineChart>
     </ResponsiveContainer>
   );
-};
+}, (prevProps, nextProps) => {
+  // Only re-render if data or cauldronId changes
+  // Return true if props are equal (skip re-render), false if different (re-render)
+  if (prevProps.data.length !== nextProps.data.length) return false;
+  if (prevProps.cauldronId !== nextProps.cauldronId) return false;
+  // Deep comparison would be expensive, so we'll rely on reference equality
+  // The parent component should memoize the data array
+  return prevProps.data === nextProps.data;
+});
 
+CauldronTimeSeriesChart.displayName = 'CauldronTimeSeriesChart';
