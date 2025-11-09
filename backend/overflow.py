@@ -5,8 +5,6 @@ import numpy as np
 DATA_URL = "https://hackutd2025.eog.systems/api/Data"
 INFO_URL = "https://hackutd2025.eog.systems/api/Information/cauldrons"
 
-# Streamlit UI removed from CLI path; this file can also be run as a script
-
 def fetch_api_data():
     try:
         data_json = requests.get(DATA_URL, timeout=5).json()
