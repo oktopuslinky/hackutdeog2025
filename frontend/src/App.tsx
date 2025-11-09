@@ -1,13 +1,16 @@
-import { useMemo } from "react";
+import { useState } from "react";
+import { BarChart3 } from "lucide-react";
 import LiquidEther from "@/components/LiquidEther";
-
-const teamLinks = [
-  { label: "Backend API", href: "http://localhost:8000/docs" },
-  { label: "Repository", href: "https://github.com/your-org/hackutdeog2025" }
-];
+import VariableProximity from "@/components/VariableProximity";
+import { GooeyButton } from "@/components/GooeyButton";
+import { DashboardPage } from "@/pages/DashboardPage";
 
 function App() {
-  const year = useMemo(() => new Date().getFullYear(), []);
+  const [showDashboard, setShowDashboard] = useState(false);
+
+  if (showDashboard) {
+    return <DashboardPage onBack={() => setShowDashboard(false)} />;
+  }
 
   return (
     <div className="relative min-h-screen bg-slate-950 text-white overflow-hidden">
@@ -31,44 +34,24 @@ function App() {
         autoRampDuration={0.6}
       />
 
-      <div className="app relative z-10 pointer-events-none">
-        <header className="hero pointer-events-auto">
-          <h1>HackUTD OG 2025</h1>
-          <p>React + Vite scaffold ready for rapid iteration.</p>
-          <a className="cta" href="https://vitejs.dev/guide/" target="_blank" rel="noreferrer">
-            Vite Docs
-          </a>
-        </header>
+      <div className="relative z-10 flex items-center justify-center min-h-screen px-4 pointer-events-none">
+        <h1 className="text-6xl sm:text-7xl md:text-8xl lg:text-9xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-purple-300 drop-shadow-[0_0_30px_rgba(168,85,247,0.5)]">
+          <VariableProximity 
+            text="Wihmsical AI"
+            radius={180}
+            maxFontSize={1.4}
+            minFontSize={0.5}
+          />
+        </h1>
+      </div>
 
-        <main className="content pointer-events-auto">
-          <section>
-            <h2>Getting Started</h2>
-            <ol>
-              <li>
-                Install dependencies with <code>npm install</code> or <code>pnpm install</code>.
-              </li>
-              <li>Run the dev server with <code>npm run dev</code>.</li>
-              <li>Edit files in <code>src/</code> to build your UI.</li>
-            </ol>
-          </section>
-
-          <section>
-            <h2>Team Resources</h2>
-            <ul>
-              {teamLinks.map((link) => (
-                <li key={link.href}>
-                  <a href={link.href} target="_blank" rel="noreferrer">
-                    {link.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </main>
-
-        <footer className="footer pointer-events-auto">
-          <p>&copy; {year} HackUTDE OG Team. Built with React + Vite.</p>
-        </footer>
+      {/* Gooey Dashboard Button at Bottom */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+        <GooeyButton 
+          label="Dashboard" 
+          icon={BarChart3}
+          onClick={() => setShowDashboard(true)}
+        />
       </div>
     </div>
   );
