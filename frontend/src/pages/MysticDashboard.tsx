@@ -6,6 +6,7 @@ import { ShimmerText } from "@/components/ShimmerText";
 import { NotificationBubble } from "@/components/NotificationBubble";
 import { GlassButton } from "@/components/ui/glass-button";
 import { OrbitalLoader } from "@/components/ui/orbital-loader";
+import { CauldronTimeSeriesChart } from "@/components/CauldronTimeSeriesChart";
 import { getDashboardStats, DashboardStats } from "@/services/api";
 
 interface MysticDashboardProps {
@@ -64,8 +65,8 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
 
   useEffect(() => {
     fetchData(selectedCauldron);
-    // Auto-refresh every 30 seconds with current selection
-    const interval = setInterval(() => fetchData(selectedCauldron), 30000);
+    // Auto-refresh every 2 minutes (120 seconds) instead of 30 seconds
+    const interval = setInterval(() => fetchData(selectedCauldron), 120000);
     return () => clearInterval(interval);
   }, [selectedCauldron]);
 
@@ -97,17 +98,7 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
     "Please wait...",
   ];
 
-  const graphData = dashboardData?.energyData || [
-    { day: "Mon", energy: 45 },
-    { day: "Tue", energy: 72 },
-    { day: "Wed", energy: 58 },
-    { day: "Thu", energy: 85 },
-    { day: "Fri", energy: 91 },
-    { day: "Sat", energy: 68 },
-    { day: "Sun", energy: 77 },
-  ];
-
-  const maxEnergy = Math.max(...graphData.map((d) => d.energy));
+  const timeSeriesData = dashboardData?.graphData || dashboardData?.timeSeriesData || [];
 
   return (
     <div
@@ -251,110 +242,39 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
                 </motion.div>
               </div>
 
-                  <div className="mb-10">
-                    <ShimmerText>
-                      {`Cauldron ${selectedCauldron} Energy Levels`}
-                    </ShimmerText>
-                    <p className="text-[#E8C14B]/60 text-sm mt-2 font-light tracking-widest">
-                      Weekly arcane power levels for Cauldron {selectedCauldron}
-                      {lastUpdate && (
-                        <span className="ml-4 text-[#46E2A1]/50 text-xs">
-                          Last updated: {lastUpdate.toLocaleTimeString()}
-                        </span>
-                      )}
-                    </p>
-                  </div>
+              <div className="mb-10">
+                <ShimmerText>
+                  {`Cauldron ${selectedCauldron} — Potion Level & Drain Probability`}
+                </ShimmerText>
+                <p className="text-[#E8C14B]/60 text-sm mt-2 font-light tracking-widest">
+                  Real-time monitoring potion levels and drain probability for Cauldron {selectedCauldron}
+                  {lastUpdate && (
+                    <span className="ml-4 text-[#46E2A1]/50 text-xs">
+                      Last updated: {lastUpdate.toLocaleTimeString()}
+                    </span>
+                  )}
+                </p>
+              </div>
 
-              {/* Graph Container */}
+              {/* Interactive Time Series Chart Container */}
               <div className="relative h-[500px] bg-[#1B0F1F]/50 rounded-2xl border border-[#9B4CC2]/20 p-8">
                 {isLoading ? (
                   <div className="flex items-center justify-center h-full">
                     <OrbitalLoader message="Loading energy data..." />
                   </div>
+                ) : timeSeriesData.length > 0 ? (
+                  <CauldronTimeSeriesChart
+                    data={timeSeriesData}
+                    cauldronId={selectedCauldron}
+                  />
                 ) : (
-                  <>
-                    {/* Y-axis labels */}
-                    <div className="absolute left-2 top-6 bottom-6 flex flex-col justify-between text-xs text-[#9B4CC2]/50">
-                      <span>100</span>
-                      <span>75</span>
-                      <span>50</span>
-                      <span>25</span>
-                      <span>0</span>
+                  <div className="flex items-center justify-center h-full text-white/60">
+                    <div className="text-center">
+                      <p className="text-lg mb-2">No time series data available</p>
+                      <p className="text-sm">Data will appear here once available</p>
                     </div>
-
-                    {/* Graph bars */}
-                    <div className="ml-8 h-full flex items-end justify-around gap-4">
-                      {graphData.map((data, i) => {
-                        const heightPercent = (data.energy / maxEnergy) * 100;
-                        return (
-                          <div key={data.day} className="flex-1 flex flex-col items-center gap-3">
-                            <motion.div
-                              className="w-full relative group cursor-pointer"
-                              style={{ height: `${heightPercent}%` }}
-                              initial={{ height: 0 }}
-                              animate={{ height: `${heightPercent}%` }}
-                              transition={{ duration: 1.5, delay: i * 0.1 }}
-                            >
-                              <div className="absolute inset-0 bg-gradient-to-t from-[#46E2A1]/40 via-[#9B4CC2]/40 to-[#E8C14B]/60 rounded-t-lg blur-sm group-hover:blur-md transition-all" />
-                              <div className="absolute inset-0 bg-gradient-to-t from-[#46E2A1]/80 via-[#9B4CC2]/70 to-[#E8C14B]/90 rounded-t-lg border border-[#46E2A1]/30" />
-
-                              <motion.div
-                                className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
-                                initial={{ y: 10 }}
-                                whileHover={{ y: 0 }}
-                              >
-                                <div className="bg-[#1B0F1F]/90 border border-[#E8C14B]/50 rounded-lg px-3 py-1 text-[#E8C14B] text-xs font-semibold whitespace-nowrap">
-                                  {data.energy}%
-                                </div>
-                              </motion.div>
-
-                              <motion.div
-                                className="absolute -top-2 left-1/2 -translate-x-1/2"
-                                animate={{
-                                  scale: [1, 1.3, 1],
-                                  opacity: [0.5, 1, 0.5],
-                                }}
-                                transition={{
-                                  duration: 2,
-                                  repeat: Infinity,
-                                  delay: i * 0.2,
-                                }}
-                              >
-                                <Sparkles className="w-4 h-4 text-[#E8C14B]" />
-                              </motion.div>
-                            </motion.div>
-
-                            <span className="text-[#E8C14B]/70 text-sm tracking-wider">
-                              {data.day}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div className="absolute left-8 right-0 top-6 bottom-16 pointer-events-none">
-                      {[0, 1, 2, 3, 4].map((i) => (
-                        <div
-                          key={i}
-                          className="absolute w-full border-t border-[#9B4CC2]/10"
-                          style={{ top: `${i * 25}%` }}
-                        />
-                      ))}
-                    </div>
-                  </>
+                  </div>
                 )}
-              </div>
-
-              {/* Legend */}
-              <div className="mt-6 flex items-center justify-center gap-6 text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-gradient-to-t from-[#46E2A1] to-[#E8C14B] border border-[#46E2A1]/50" />
-                  <span className="text-[#E8C14B]/70">Active Brewing Energy</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-gradient-to-t from-[#9B4CC2] to-[#5C2E7E] border border-[#9B4CC2]/50" />
-                  <span className="text-[#E8C14B]/70">Dormant Reserve</span>
-                </div>
               </div>
 
               <motion.div
@@ -507,4 +427,3 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
     </div>
   );
 };
-

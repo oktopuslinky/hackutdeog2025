@@ -5,6 +5,9 @@ const INFO_URL = "https://hackutd2025.eog.systems/api/Information/cauldrons";
 const OVERFLOW_URL =
   import.meta.env.VITE_OVERFLOW_URL ??
   "http://localhost:5001/api/overflow-intervals"; // Local Flask backend
+const DRAIN_SERVER_URL =
+  import.meta.env.VITE_DRAIN_SERVER_URL ??
+  "http://localhost:5002"; // Drain detection server
 
 export interface CauldronLevel {
   timestamp: string;
@@ -39,11 +42,22 @@ export interface OverflowInterval {
   max_probability: number;
 }
 
+export interface GraphDataPoint {
+  time: string;
+  timeFormatted?: string;
+  potionLevel: number;
+  oilLevel?: number; // For backward compatibility
+  probDown: number;
+  probDownPercent?: number;
+}
+
 export interface DashboardStats {
   fraudTickets: string[];
   missingPotions: string[];
   overflowAlerts: string[];
   energyData: Array<{ day: string; energy: number }>;
+  timeSeriesData: Array<{ time: string; oilLevel: number; probDown: number }>;
+  graphData: GraphDataPoint[]; // New graph data from drain server
   availableCauldrons: string[];
   selectedCauldron?: string;
   overflowDebug: OverflowInterval[];
@@ -69,7 +83,17 @@ function normalizeCauldronId(id?: string): string | undefined {
 }
 
 function normalizeBackendId(id: string): string {
-  return id.trim().toLowerCase();
+  const trimmed = id.trim().toLowerCase();
+  // If it's already in cauldron_XXX format, return as is
+  if (trimmed.startsWith("cauldron_")) {
+    return trimmed;
+  }
+  // If it's just a number, pad it
+  if (/^\d+$/.test(trimmed)) {
+    const padded = trimmed.padStart(3, "0");
+    return `cauldron_${padded}`;
+  }
+  return trimmed;
 }
 
 // Fetch raw cauldron data from API
@@ -114,8 +138,10 @@ function processRawData(data: CauldronLevel[]): CauldronRecord[] {
   return records;
 }
 
-// Compute features for ML prediction
+// Compute features for ML prediction (matching app.py logic)
 function computeFeatures(records: CauldronRecord[], window: number = 10): CauldronRecord[] {
+  console.log("DEBUG computeFeatures: Input records count:", records.length);
+  
   // Group by cauldron and sort by time
   const byCauldron: Record<string, CauldronRecord[]> = {};
   
@@ -126,6 +152,9 @@ function computeFeatures(records: CauldronRecord[], window: number = 10): Cauldr
     byCauldron[record.Cauldron_ID].push(record);
   });
 
+  console.log("DEBUG computeFeatures: Cauldrons found:", Object.keys(byCauldron));
+  console.log("DEBUG computeFeatures: Records per cauldron:", Object.entries(byCauldron).map(([id, recs]) => `${id}: ${recs.length}`));
+
   // Sort each cauldron's records by time
   Object.values(byCauldron).forEach((cauldronRecords) => {
     cauldronRecords.sort((a, b) => new Date(a.Time).getTime() - new Date(b.Time).getTime());
@@ -135,19 +164,45 @@ function computeFeatures(records: CauldronRecord[], window: number = 10): Cauldr
   const processedRecords: CauldronRecord[] = [];
 
   Object.entries(byCauldron).forEach(([cauldronId, cauldronRecords]) => {
+    console.log(`DEBUG computeFeatures: Processing ${cauldronId}, ${cauldronRecords.length} records, window=${window}`);
     cauldronRecords.forEach((record, idx) => {
-      if (idx < window) return; // Need enough history
+      if (idx < window) {
+        // Include records without features for completeness
+        processedRecords.push({ ...record, Prob_Down: 0 });
+        return;
+      }
 
-      const windowRecords = cauldronRecords.slice(idx - window, idx);
-      const levels = windowRecords.map((r) => r.Oil_Level);
-      const mean = levels.reduce((a, b) => a + b, 0) / levels.length;
-      const diff = record.Oil_Level - cauldronRecords[idx - 1].Oil_Level;
+      const windowSlice = cauldronRecords.slice(idx - window, idx + 1);
+      const levels = windowSlice.map((r) => r.Oil_Level);
       
-      // Simple heuristic for drain probability
-      // Real implementation would use ML model
-      const isDecreasing = diff < 0;
-      const isBelowMean = record.Oil_Level < mean;
-      const probDown = isDecreasing && isBelowMean ? 0.7 + Math.random() * 0.3 : Math.random() * 0.3;
+      // Compute rolling statistics (matching app.py)
+      const rollingMean = levels.reduce((a, b) => a + b, 0) / levels.length;
+      const variance = levels.reduce((sum, val) => sum + Math.pow(val - rollingMean, 2), 0) / levels.length;
+      const rollingStd = Math.sqrt(variance);
+      
+      const diff = record.Oil_Level - cauldronRecords[idx - 1].Oil_Level;
+      const slope = (record.Oil_Level - cauldronRecords[idx - window].Oil_Level) / window;
+      const momentum = record.Oil_Level - rollingMean;
+      
+      // Enhanced heuristic-based drain probability (mimicking ML model)
+      // Factors: negative diff, negative slope, negative momentum, low level relative to mean
+      let probDown = 0;
+      
+      if (diff < 0) {
+        probDown += 0.3; // Decreasing level
+      }
+      if (slope < -0.1) {
+        probDown += 0.2; // Steep negative slope
+      }
+      if (momentum < -2) {
+        probDown += 0.2; // Below rolling mean
+      }
+      if (record.Oil_Level < rollingMean - rollingStd) {
+        probDown += 0.3; // Significantly below mean
+      }
+      
+      // Normalize to 0-1 range
+      probDown = Math.min(1, Math.max(0, probDown));
 
       processedRecords.push({
         ...record,
@@ -155,6 +210,10 @@ function computeFeatures(records: CauldronRecord[], window: number = 10): Cauldr
       });
     });
   });
+
+  console.log("DEBUG computeFeatures: Output records count:", processedRecords.length);
+  console.log("DEBUG computeFeatures: Records with Prob_Down:", processedRecords.filter(r => r.Prob_Down !== undefined).length);
+  console.log("DEBUG computeFeatures: Sample processed record:", processedRecords.find(r => r.Prob_Down !== undefined && r.Prob_Down > 0));
 
   return processedRecords;
 }
@@ -271,6 +330,47 @@ export async function fetchOverflowIntervals(): Promise<OverflowInterval[]> {
   }
 }
 
+// Fetch graph data from drain server
+export async function fetchCauldronGraphData(cauldronId: string): Promise<GraphDataPoint[]> {
+  const graphUrl = `${DRAIN_SERVER_URL}/api/cauldron/${cauldronId}/graph`;
+  console.log("FETCHING GRAPH DATA from:", graphUrl);
+  try {
+    const response = await fetch(graphUrl, {
+      method: "GET",
+      mode: "cors",
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+    
+    console.log("📊 Graph API response status:", response.status, response.statusText);
+    
+    if (!response.ok) {
+      console.error(`Graph API failed: ${response.status} ${response.statusText}`);
+      const text = await response.text();
+      console.error("Response body:", text);
+      return [];
+    }
+
+    const data = await response.json();
+    console.log("Graph API response data:", data);
+    
+    if (data?.data && Array.isArray(data.data)) {
+      console.log(`Received ${data.data.length} graph data points`);
+      return data.data;
+    }
+    
+    console.warn("Unexpected graph response format:", data);
+    return [];
+  } catch (error) {
+    console.error("Error fetching graph data:", error);
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      console.error("Network error - is the drain server running on", DRAIN_SERVER_URL, "?");
+    }
+    return [];
+  }
+}
+
 // Get all available cauldrons
 export function getAvailableCauldrons(records: CauldronRecord[]): string[] {
   const cauldrons = new Set<string>();
@@ -294,19 +394,51 @@ export async function getDashboardStats(selectedCauldron?: string): Promise<Dash
     overflowError = error as Error;
   }
 
+  // Fetch graph data from drain server - independent fetch
+  console.log("About to fetch graph data...");
+  let graphData: GraphDataPoint[] = [];
+  let graphError: Error | null = null;
+  if (selectedCauldron) {
+    try {
+      graphData = await fetchCauldronGraphData(selectedCauldron);
+      console.log("Graph data received:", graphData.length, "points");
+    } catch (error) {
+      console.error("Graph data fetch failed but continuing:", error);
+      graphError = error as Error;
+    }
+  }
+
   try {
     const rawData = await fetchCauldronData();
+    console.log("DEBUG: Raw data fetched, entries:", rawData.length);
+    
     const records = processRawData(rawData);
+    console.log("DEBUG: Processed records count:", records.length);
+    console.log("DEBUG: Sample record:", records[0]);
+    
     const processedRecords = computeFeatures(records);
     const allCauldrons = getAvailableCauldrons(processedRecords);
+    console.log("DEBUG: Available cauldrons:", allCauldrons);
+    
     const cauldronToFetch = normalizeCauldronId(selectedCauldron);
+    console.log("DEBUG: Selected cauldron:", selectedCauldron, "-> normalized:", cauldronToFetch);
 
     // Filter by selected cauldron if specified
     const filteredRecords = cauldronToFetch
       ? processedRecords.filter(
-          (r) => normalizeBackendId(r.Cauldron_ID) === cauldronToFetch
+          (r) => {
+            const normalized = normalizeBackendId(r.Cauldron_ID);
+            const matches = normalized === cauldronToFetch;
+            if (!matches && processedRecords.indexOf(r) < 5) {
+              console.log(`DEBUG: Record ${r.Cauldron_ID} (normalized: ${normalized}) does NOT match ${cauldronToFetch}`);
+            }
+            return matches;
+          }
         )
       : processedRecords;
+    
+    console.log("DEBUG: After filtering - filteredRecords count:", filteredRecords.length);
+    console.log("DEBUG: Filtered records sample:", filteredRecords.slice(0, 3));
 
     const intervals = detectHighProbIntervals(filteredRecords);
     
@@ -414,13 +546,33 @@ export async function getDashboardStats(selectedCauldron?: string): Promise<Dash
       return found || { day, energy: 50 };
     });
 
+    // Generate time series data for the chart (matching app.py)
+    console.log("DEBUG: Generating time series data");
+    console.log("DEBUG: filteredRecords count:", filteredRecords.length);
+    console.log("DEBUG: Records with Prob_Down:", filteredRecords.filter((r) => r.Prob_Down !== undefined).length);
+    console.log("DEBUG: Sample filtered record:", filteredRecords[0]);
+    console.log("DEBUG: Sample record Prob_Down:", filteredRecords[0]?.Prob_Down);
+    
+    const timeSeriesData = filteredRecords
+      .filter((r) => r.Prob_Down !== undefined)
+      .map((record) => ({
+        time: record.Time,
+        oilLevel: record.Oil_Level,
+        probDown: record.Prob_Down || 0,
+      }))
+      .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+    
+    console.log("DEBUG: Final timeSeriesData count:", timeSeriesData.length);
+    console.log("DEBUG: First 3 timeSeriesData points:", timeSeriesData.slice(0, 3));
+    console.log("DEBUG: Full timeSeriesData payload:", JSON.stringify(timeSeriesData.slice(0, 5), null, 2));
+
     return {
       fraudTickets: fraudTickets.length > 0 ? fraudTickets : [
         selectedCauldron 
-          ? `No suspicious drains detected in ${selectedCauldron}`
+          ? `No suspicious drains detected in Cauldron ${selectedCauldron}`
           : "No suspicious drains detected",
         "System operating normally",
-        selectedCauldron ? `${selectedCauldron} monitored` : "All cauldrons monitored",
+        selectedCauldron ? `Cauldron ${selectedCauldron} monitored` : "All cauldrons monitored",
         "Security protocols active",
       ],
       missingPotions: missingPotions.length > 0 ? missingPotions : [
@@ -433,6 +585,8 @@ export async function getDashboardStats(selectedCauldron?: string): Promise<Dash
         "No overflow currently detected",
       ],
       energyData: orderedEnergyData,
+      timeSeriesData: timeSeriesData.length > 0 ? timeSeriesData : [],
+      graphData: graphData.length > 0 ? graphData : [], // Graph data from drain server
       availableCauldrons: allCauldrons,
       selectedCauldron: cauldronToFetch,
       overflowDebug: [],
@@ -487,33 +641,35 @@ export async function getDashboardStats(selectedCauldron?: string): Promise<Dash
     }
     
     // Return default data if API fails, but include overflow data if we got it
-    return {
-      fraudTickets: [
-        "API connection unavailable",
-        "Retrying connection...",
-        "Please check network status",
-        "System in fallback mode",
-      ],
-      missingPotions: [
-        "Data sync pending",
-        "Awaiting API response",
-        "Historical data available",
-        "Real-time sync interrupted",
-      ],
-      overflowAlerts,
-      energyData: [
-        { day: "Mon", energy: 45 },
-        { day: "Tue", energy: 72 },
-        { day: "Wed", energy: 58 },
-        { day: "Thu", energy: 85 },
-        { day: "Fri", energy: 91 },
-        { day: "Sat", energy: 68 },
-        { day: "Sun", energy: 77 },
-      ],
-      availableCauldrons: [],
-      selectedCauldron,
-      overflowDebug: [],
-    };
+        return {
+          fraudTickets: [
+            "API connection unavailable",
+            "Retrying connection...",
+            "Please check network status",
+            "System in fallback mode",
+          ],
+          missingPotions: [
+            "Data sync pending",
+            "Awaiting API response",
+            "Historical data available",
+            "Real-time sync interrupted",
+          ],
+          overflowAlerts,
+          energyData: [
+            { day: "Mon", energy: 45 },
+            { day: "Tue", energy: 72 },
+            { day: "Wed", energy: 58 },
+            { day: "Thu", energy: 85 },
+            { day: "Fri", energy: 91 },
+            { day: "Sat", energy: 68 },
+            { day: "Sun", energy: 77 },
+          ],
+          timeSeriesData: [],
+          graphData: graphData.length > 0 ? graphData : [], // Include graph data even in error case
+          availableCauldrons: [],
+          selectedCauldron,
+          overflowDebug: [],
+        };
   }
 }
 
