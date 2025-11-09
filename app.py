@@ -30,7 +30,6 @@ def fetch_api_data():
     return pd.DataFrame(records)
 
 def compute_features(df, window=10):
-    """Compute rolling stats and derived features for each cauldron."""
     df = df.sort_values(["Cauldron_ID", "Time"]).copy()
     df["Diff"] = df.groupby("Cauldron_ID")["Oil_Level"].diff()
     df["Rolling_Mean"] = df.groupby("Cauldron_ID")["Oil_Level"].rolling(window).mean().reset_index(level=0, drop=True)
@@ -172,15 +171,14 @@ intervals = detect_high_prob_intervals(cdf)
 if not intervals.empty:
     st.write(f"Found {len(intervals)} high probability intervals for {selected}")
     
-    mode_series = intervals['rate_of_change'].mode()
-    mode_rate = mode_series.iloc[0] if not mode_series.empty else None
+    median_rate = intervals['rate_of_change'].median()
     total_oil_change = intervals['oil_change'].sum()
     avg_duration = intervals['duration_mins'].mean()
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        rate_display = f"{abs(mode_rate):.3f} units/min" if mode_rate is not None else "N/A"
-        st.metric("Mode Rate of Change", rate_display)
+        rate_display = f"{abs(median_rate):.3f} units/min" if pd.notna(median_rate) else "N/A"
+        st.metric("Median Rate of Change", rate_display)
     with col2:
         st.metric("Total Oil Change", f"{abs(total_oil_change):.2f} units")
     with col3:
@@ -236,19 +234,17 @@ if not intervals.empty:
 else:
     st.info("No high probability intervals detected for the selected time period.")
 
-# Calculate statistics for all cauldrons
-st.subheader("📊 Cauldron Interval Analysis")
+st.subheader("Cauldron Interval Analysis")
 all_cauldron_stats = []
 
 for cauldron in combined['Cauldron_ID'].unique():
     cauldron_data = combined[combined['Cauldron_ID'] == cauldron]
     cauldron_intervals = detect_high_prob_intervals(cauldron_data)
     if not cauldron_intervals.empty:
-        mode_series = cauldron_intervals['rate_of_change'].mode()
-        mode_rate = mode_series.iloc[0] if not mode_series.empty else None
+        median_rate = cauldron_intervals['rate_of_change'].median()
         all_cauldron_stats.append({
             'Cauldron_ID': cauldron,
-            'Mode_Rate_Change': abs(mode_rate) if mode_rate is not None else None,
+            'Median_Rate_Change': abs(median_rate) if pd.notna(median_rate) else None,
             'Total_Intervals': len(cauldron_intervals),
             'Total_Duration': cauldron_intervals['duration_mins'].sum(),
             'Avg_Probability': cauldron_intervals['avg_probability'].mean(),
@@ -261,12 +257,12 @@ if all_cauldron_stats:
     fig_stats = px.bar(
         stats_df,
         x='Cauldron_ID',
-        y='Mode_Rate_Change',
+        y='Median_Rate_Change',
         color='Avg_Probability',
         text='Total_Intervals',
         title='Cauldron Interval Statistics',
         labels={
-            'Mode_Rate_Change': 'Mode Rate of Change (units/min)',
+            'Median_Rate_Change': 'Median Rate of Change (units/min)',
             'Avg_Probability': 'Average Probability'
         }
     )
@@ -279,6 +275,6 @@ if all_cauldron_stats:
     ))
 
 if st.session_state.last_update:
-    st.caption(f"🕒 Last Updated: {st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption(f"Last Updated: {st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')}")
 else:
     st.caption("No data loaded yet.")
