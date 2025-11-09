@@ -101,7 +101,7 @@ export const CauldronTimeSeriesChart: React.FC<CauldronTimeSeriesChartProps> = m
         <XAxis
           dataKey="timeFormatted"
           stroke="#9B4CC2/60"
-          tick={{ fill: "#9B4CC2/70", fontSize: 11 }}
+          tick={{ fill: "#ffffff", fontSize: 11 }}
           angle={-45}
           textAnchor="end"
           height={80}
