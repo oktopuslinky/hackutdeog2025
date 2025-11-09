@@ -279,6 +279,6 @@ if all_cauldron_stats:
     ))
 
 if st.session_state.last_update:
-    st.caption(f"🕒 Last Updated: {st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption(f"Last Updated: {st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')}")
 else:
     st.caption("No data loaded yet.")
