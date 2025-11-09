@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { motion } from "framer-motion";
 
-export const NotificationBubble = ({
+export const NotificationBubble = memo(({
   text,
   delay = 0,
 }: {
@@ -14,7 +15,8 @@ export const NotificationBubble = ({
       transition={{ delay, duration: 0.5 }}
       className="relative group"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-[#9B4CC2]/20 to-[#46E2A1]/20 rounded-2xl blur-sm group-hover:blur-md transition-all duration-300" />
+      {/* Reduce blur effect for better performance */}
+      <div className="absolute inset-0 bg-gradient-to-r from-[#9B4CC2]/20 to-[#46E2A1]/20 rounded-2xl blur-sm group-hover:blur-sm transition-all duration-300" />
       <div className="relative bg-[#1B0F1F]/60 backdrop-blur-sm border border-[#9B4CC2]/30 rounded-2xl px-6 py-4 hover:border-[#E8C14B]/50 transition-all duration-300">
         <p className="text-white/80 text-sm font-light tracking-wide">
           {text}
@@ -23,5 +25,6 @@ export const NotificationBubble = ({
       </div>
     </motion.div>
   );
-};
+});
 
+NotificationBubble.displayName = 'NotificationBubble';

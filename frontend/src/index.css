@@ -46,6 +46,22 @@ body {
   background: linear-gradient(to bottom, #E8C14B, #9B4CC2);
 }
 
+/* Cauldron Selector Dropdown Styling */
+select option {
+  background-color: #1B0F1F;
+  color: white;
+  padding: 10px;
+}
+
+select option:hover {
+  background-color: #3A1F3D;
+}
+
+select option:checked {
+  background-color: #5C2E7E;
+  color: #E8C14B;
+}
+
 .app {
   display: flex;
   flex-direction: column;

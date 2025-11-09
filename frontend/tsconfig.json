@@ -16,7 +16,8 @@
     "paths": {
       "@/*": ["src/*"]
     },
-    "allowJs": true
+    "allowJs": true,
+    "skipLibCheck": true
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]
