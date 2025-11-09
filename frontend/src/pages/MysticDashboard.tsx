@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { Sparkles, AlertTriangle, Droplet, Flame, TrendingUp, Home, RefreshCw } from "lucide-react";
 import { FloatingParticles } from "@/components/FloatingParticles";
@@ -26,8 +26,8 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [selectedCauldron, setSelectedCauldron] = useState<string>("1");
 
-  // Fetch dashboard data
-  const fetchData = async (cauldronId: string) => {
+  // Fetch dashboard data - memoized with useCallback
+  const fetchData = useCallback(async (cauldronId: string) => {
     setIsLoading(true);
     try {
       console.log("Dashboard fetchData called with cauldron:", cauldronId);
@@ -40,7 +40,7 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   // Test overflow endpoint directly
   const testOverflowEndpoint = async () => {
@@ -57,11 +57,11 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
     }
   };
 
-  // Handle cauldron selection change
-  const handleCauldronChange = (cauldronId: string) => {
+  // Handle cauldron selection change - memoized
+  const handleCauldronChange = useCallback((cauldronId: string) => {
     setSelectedCauldron(cauldronId);
     fetchData(cauldronId);
-  };
+  }, [fetchData]);
 
   useEffect(() => {
     fetchData(selectedCauldron);
@@ -71,34 +71,45 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
   }, [selectedCauldron]);
 
   useEffect(() => {
+    // Reduce update frequency from 50ms to 100ms for better performance
     const interval = setInterval(() => {
       setShimmerPosition((prev) => (prev + 1) % 100);
-    }, 50);
+    }, 100);
     return () => clearInterval(interval);
   }, []);
 
-  const fraudTickets = dashboardData?.fraudTickets || [
-    "Loading cauldron data...",
-    "Connecting to sensors...",
-    "Initializing monitoring...",
-    "Please wait...",
-  ];
+  // Memoize derived data to prevent unnecessary recalculations
+  const fraudTickets = useMemo(() => 
+    dashboardData?.fraudTickets || [
+      "Loading cauldron data...",
+      "Connecting to sensors...",
+      "Initializing monitoring...",
+      "Please wait...",
+    ], [dashboardData?.fraudTickets]
+  );
 
-  const missingPotions = dashboardData?.missingPotions || [
-    "Loading inventory data...",
-    "Syncing with database...",
-    "Fetching records...",
-    "Please wait...",
-  ];
+  const missingPotions = useMemo(() =>
+    dashboardData?.missingPotions || [
+      "Loading inventory data...",
+      "Syncing with database...",
+      "Fetching records...",
+      "Please wait...",
+    ], [dashboardData?.missingPotions]
+  );
 
-  const overflowAlerts = dashboardData?.overflowAlerts || [
-    "Loading alert system...",
-    "Checking cauldron levels...",
-    "Monitoring overflow...",
-    "Please wait...",
-  ];
+  const overflowAlerts = useMemo(() =>
+    dashboardData?.overflowAlerts || [
+      "Loading alert system...",
+      "Checking cauldron levels...",
+      "Monitoring overflow...",
+      "Please wait...",
+    ], [dashboardData?.overflowAlerts]
+  );
 
-  const timeSeriesData = dashboardData?.graphData || dashboardData?.timeSeriesData || [];
+  const timeSeriesData = useMemo(() =>
+    dashboardData?.graphData || dashboardData?.timeSeriesData || [],
+    [dashboardData?.graphData, dashboardData?.timeSeriesData]
+  );
 
   return (
     <div
@@ -107,7 +118,7 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
     >
       {/* Top Dashboard Bar */}
       <motion.header
-        className="fixed top-0 left-0 right-0 z-50 backdrop-blur-md bg-[#1B0F1F]/40 border-b border-[#9B4CC2]/20"
+        className="fixed top-0 left-0 right-0 z-50 backdrop-blur-sm bg-[#1B0F1F]/40 border-b border-[#9B4CC2]/20"
         initial={{ y: -100 }}
         animate={{ y: 0 }}
         transition={{ duration: 0.8, ease: "easeOut" }}
@@ -232,7 +243,8 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
             transition={{ duration: 1, delay: 0.5 }}
           >
             <FloatingParticles />
-            <div className="relative bg-gradient-to-br from-[#5C2E7E]/30 to-[#3A1F3D]/20 backdrop-blur-xl border border-[#9B4CC2]/40 rounded-3xl p-10 shadow-2xl">
+            {/* Reduce backdrop-blur intensity for better performance */}
+            <div className="relative bg-gradient-to-br from-[#5C2E7E]/30 to-[#3A1F3D]/20 backdrop-blur-md border border-[#9B4CC2]/40 rounded-3xl p-10 shadow-2xl">
               <div className="absolute -top-5 -right-5">
                 <motion.div
                   animate={{ rotate: 360 }}
@@ -305,7 +317,7 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
               transition={{ duration: 0.8 }}
             >
               <FloatingParticles />
-              <div className="relative bg-gradient-to-br from-[#5C2E7E]/20 to-[#1B0F1F]/40 backdrop-blur-xl border border-[#9B4CC2]/30 rounded-3xl p-6 shadow-2xl h-full flex flex-col">
+              <div className="relative bg-gradient-to-br from-[#5C2E7E]/20 to-[#1B0F1F]/40 backdrop-blur-md border border-[#9B4CC2]/30 rounded-3xl p-6 shadow-2xl h-full flex flex-col">
                 <div className="absolute -top-4 -right-4">
                   <AlertTriangle className="w-10 h-10 text-red-400 animate-pulse" />
                 </div>
@@ -346,7 +358,7 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
               transition={{ duration: 0.8, delay: 0.1 }}
             >
               <FloatingParticles />
-              <div className="relative bg-gradient-to-br from-[#46E2A1]/10 to-[#1B0F1F]/40 backdrop-blur-xl border border-[#46E2A1]/30 rounded-3xl p-6 shadow-2xl h-full flex flex-col">
+              <div className="relative bg-gradient-to-br from-[#46E2A1]/10 to-[#1B0F1F]/40 backdrop-blur-md border border-[#46E2A1]/30 rounded-3xl p-6 shadow-2xl h-full flex flex-col">
                 <div className="absolute -top-4 -right-4">
                   <Droplet className="w-10 h-10 text-blue-400 animate-bounce" />
                 </div>
@@ -387,7 +399,7 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
               transition={{ duration: 0.8, delay: 0.2 }}
             >
               <FloatingParticles />
-              <div className="relative bg-gradient-to-br from-[#E8C14B]/15 to-[#1B0F1F]/40 backdrop-blur-xl border border-[#E8C14B]/30 rounded-3xl p-6 shadow-2xl h-full flex flex-col">
+              <div className="relative bg-gradient-to-br from-[#E8C14B]/15 to-[#1B0F1F]/40 backdrop-blur-md border border-[#E8C14B]/30 rounded-3xl p-6 shadow-2xl h-full flex flex-col">
                 <div className="absolute -top-4 -right-4">
                   <Flame className="w-10 h-10 text-orange-400 animate-pulse" />
                 </div>
