@@ -1,6 +1,7 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
 import overflow
+import ticket_drain_matching
 
 app = Flask(__name__)
 CORS(app)
@@ -28,15 +29,12 @@ def overflow_intervals():
         start_time=df["start_time"].dt.strftime("%Y-%m-%d %H:%M:%S"),
         end_time=df["end_time"].dt.strftime("%Y-%m-%d %H:%M:%S")
     )
-    return jsonify({
-        "status": "ok",
-        "intervals": out.to_dict(orient="records")
-    })
+    return jsonify(out.to_dict(orient="records"))
 
-
-if __name__ == "__main__":
-    import os
-
-    port = int(os.getenv("PORT", "5001"))
-    # Enable debug so Flask prints startup info and auto-reloads during development
-    app.run(host="0.0.0.0", port=port, debug=True)
+@app.get("/api/ticket-matches/<int:cauldron_number>")
+def ticket_matches(cauldron_number: int):
+    try:
+        data = ticket_drain_matching.get_ticket_drain_matches_json(cauldron_number)
+        return jsonify({"cauldron": f"cauldron_{cauldron_number:03d}", "matches": data}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
