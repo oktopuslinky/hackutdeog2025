@@ -1,0 +1,428 @@
+import pandas as pd
+import requests
+import streamlit as st
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.linear_model import LogisticRegression
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+import plotly.express as px
+import datetime as dt
+
+DATA_URL = "https://hackutd2025.eog.systems/api/Data"
+INFO_URL = "https://hackutd2025.eog.systems/api/Information/cauldrons"
+
+st.set_page_config(page_title="Real-Time Cauldron Drain Dashboard", layout="wide")
+st.title("Cauldron Drain Dashboard")
+st.caption("Click 'Refresh Data' to fetch live API readings and update predictions.")
+
+def fetch_api_data():
+    try:
+        data_json = requests.get(DATA_URL, timeout=5).json()
+    except Exception as e:
+        st.warning(f"API fetch failed: {e}")
+        return pd.DataFrame()
+
+    records = []
+    for entry in data_json:
+        ts = pd.to_datetime(entry.get("timestamp"))
+        for cid, level in entry.get("cauldron_levels", {}).items():
+            records.append({"Time": ts, "Cauldron_ID": cid, "Oil_Level": level})
+    return pd.DataFrame(records)
+
+def compute_features(df, window=10):
+    df = df.sort_values(["Cauldron_ID", "Time"]).copy()
+    df["Diff"] = df.groupby("Cauldron_ID")["Oil_Level"].diff()
+    df["Rolling_Mean"] = df.groupby("Cauldron_ID")["Oil_Level"].rolling(window).mean().reset_index(level=0, drop=True)
+    df["Rolling_Std"] = df.groupby("Cauldron_ID")["Oil_Level"].rolling(window).std().reset_index(level=0, drop=True)
+    df["Slope"] = df.groupby("Cauldron_ID")["Oil_Level"].diff(window) / window
+    df["Momentum"] = df["Oil_Level"] - df["Rolling_Mean"]
+    df["Next_Level"] = df.groupby("Cauldron_ID")["Oil_Level"].shift(-1)
+    df["Target"] = (df["Next_Level"] < df["Oil_Level"]).astype(int)
+    return df.dropna()
+
+if "last_update" not in st.session_state:
+    st.session_state.last_update = None
+if "data" not in st.session_state:
+    st.session_state.data = None
+
+if st.button("Refresh Data"):
+    with st.spinner("Fetching latest data..."):
+        raw_df = fetch_api_data()
+        if raw_df.empty or raw_df["Time"].nunique() < 15 or raw_df["Oil_Level"].nunique() <= 1:
+            st.error("API did not return enough data to build predictions. Please try again later.")
+            st.session_state.data = None
+            st.session_state.last_update = None
+        else:
+            st.session_state.data = raw_df
+            st.session_state.last_update = dt.datetime.now()
+
+if st.session_state.data is None:
+    st.info("Click 'Refresh Data' to load live readings.")
+    st.stop()
+
+raw_df = st.session_state.data
+
+df = compute_features(raw_df)
+
+numeric_features = ["Diff", "Rolling_Mean", "Rolling_Std", "Slope", "Momentum"]
+categorical_features = ["Cauldron_ID"]
+
+preprocess = ColumnTransformer(
+    transformers=[
+        ("num", StandardScaler(), numeric_features),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
+    ]
+)
+
+model = Pipeline([
+    ("preprocess", preprocess),
+    ("clf", LogisticRegression(max_iter=200))
+])
+
+X = df[numeric_features + categorical_features]
+y = df["Target"]
+model.fit(X, y)
+
+combined = compute_features(raw_df)
+X_live = combined[numeric_features + categorical_features]
+combined["Prob_Down"] = model.predict_proba(X_live)[:, 1]
+
+selected = st.selectbox("Select a Cauldron", sorted(combined["Cauldron_ID"].unique()))
+cdf = combined[combined["Cauldron_ID"] == selected]
+
+fig = px.line(
+    cdf,
+    x="Time",
+    y="Oil_Level",
+    title=f"{selected} — Oil Level & Drain Probability",
+    labels={"Oil_Level": "Oil Level"}
+)
+fig.add_scatter(
+    x=cdf["Time"],
+    y=cdf["Prob_Down"],
+    mode="lines",
+    name="Drain Probability",
+    line=dict(color="red", dash="dot"),
+    yaxis="y2"
+)
+fig.update_layout(
+    yaxis2=dict(title="Drain Probability", overlaying="y", side="right", range=[0, 1]),
+    legend=dict(x=0.02, y=0.98),
+    template="plotly_white"
+)
+st.plotly_chart(fig, use_container_width=True)
+
+st.subheader("High Probability Drain Intervals Analysis")
+
+def detect_high_prob_intervals(df, prob_threshold=0.9):
+    intervals = []
+    in_interval = False
+    start_idx = None
+    
+    for idx, row in df.iterrows():
+        if not in_interval and row['Prob_Down'] >= prob_threshold:
+            in_interval = True
+            start_idx = idx
+        elif in_interval and row['Prob_Down'] < prob_threshold:
+            if start_idx is not None:
+                start_row = df.loc[start_idx]
+                duration = (row['Time'] - start_row['Time']).total_seconds() / 60  # minutes
+                oil_change = row['Oil_Level'] - start_row['Oil_Level']
+                rate = oil_change / duration if duration > 0 else 0
+                avg_prob = df.loc[start_idx:idx]['Prob_Down'].mean()
+                
+                intervals.append({
+                    'start_time': start_row['Time'],
+                    'end_time': row['Time'],
+                    'duration_mins': duration,
+                    'oil_change': oil_change,
+                    'rate_of_change': rate,
+                    'start_level': start_row['Oil_Level'],
+                    'end_level': row['Oil_Level'],
+                    'avg_probability': avg_prob,
+                    'max_probability': df.loc[start_idx:idx]['Prob_Down'].max()
+                })
+            in_interval = False
+            start_idx = None
+    
+    if in_interval and start_idx is not None:
+        last_row = df.iloc[-1]
+        duration = (last_row['Time'] - df.loc[start_idx, 'Time']).total_seconds() / 60
+        oil_change = last_row['Oil_Level'] - df.loc[start_idx, 'Oil_Level']
+        rate = oil_change / duration if duration > 0 else 0
+        avg_prob = df.loc[start_idx:]['Prob_Down'].mean()
+        
+        intervals.append({
+            'start_time': df.loc[start_idx, 'Time'],
+            'end_time': last_row['Time'],
+            'duration_mins': duration,
+            'oil_change': oil_change,
+            'rate_of_change': rate,
+            'start_level': df.loc[start_idx, 'Oil_Level'],
+            'end_level': last_row['Oil_Level'],
+            'avg_probability': avg_prob,
+            'max_probability': df.loc[start_idx:]['Prob_Down'].max()
+        })
+            
+    return pd.DataFrame(intervals) if intervals else pd.DataFrame()
+
+intervals = detect_high_prob_intervals(cdf)
+
+if not intervals.empty:
+    st.write(f"Found {len(intervals)} high probability intervals for {selected}")
+    
+    median_rate = intervals['rate_of_change'].median()
+    total_oil_change = intervals['oil_change'].sum()
+    avg_duration = intervals['duration_mins'].mean()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        rate_display = f"{abs(median_rate):.3f} units/min" if pd.notna(median_rate) else "N/A"
+        st.metric("Median Rate of Change", rate_display)
+    with col2:
+        st.metric("Total Oil Change", f"{abs(total_oil_change):.2f} units")
+    with col3:
+        st.metric("Avg Interval Duration", f"{avg_duration:.1f} mins")
+
+    st.write("High Probability Intervals:")
+    formatted_intervals = intervals.assign(
+        start_time=intervals['start_time'].dt.strftime('%Y-%m-%d %H:%M:%S'),
+        end_time=intervals['end_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    )
+    formatted_intervals = formatted_intervals.round({
+        'duration_mins': 2,
+        'oil_change': 2,
+        'rate_of_change': 3,
+        'start_level': 2,
+        'end_level': 2,
+        'avg_probability': 3,
+        'max_probability': 3
+    })
+    
+    st.dataframe(formatted_intervals.style.background_gradient(
+        subset=['avg_probability', 'max_probability'],
+        cmap='Reds'
+    ))
+    
+    fig_intervals = px.scatter(
+        intervals,
+        x='start_time',
+        y='rate_of_change',
+        size='avg_probability',
+        color='max_probability',
+        hover_data=['duration_mins', 'oil_change'],
+        title=f'High Probability Intervals Timeline - {selected}',
+        labels={
+            'start_time': 'Interval Start Time',
+            'rate_of_change': 'Rate of Change (units/min)',
+            'avg_probability': 'Avg Probability',
+            'max_probability': 'Max Probability'
+        }
+    )
+    st.plotly_chart(fig_intervals, use_container_width=True)
+    
+    fig_prob_dist = px.box(
+        intervals,
+        y=['avg_probability', 'max_probability'],
+        title='Probability Distribution in High Probability Intervals',
+        labels={
+            'value': 'Probability',
+            'variable': 'Metric'
+        }
+    )
+    st.plotly_chart(fig_prob_dist, use_container_width=True)
+else:
+    st.info("No high probability intervals detected for the selected time period.")
+
+st.subheader("Fill Rate Baseline (from non-drain periods)")
+
+def compute_fill_rate_from_non_drain(df, prob_threshold=0.9):
+    if df.empty:
+        return None
+
+    df = df.sort_values('Time').reset_index(drop=True)
+    df['dt_min'] = df['Time'].diff().dt.total_seconds() / 60.0
+    df['dOil'] = df['Oil_Level'].diff()
+    df['step_rate'] = df['dOil'] / df['dt_min']
+
+    non_drain_mask = (df['Prob_Down'] < prob_threshold)
+    valid_steps = non_drain_mask & non_drain_mask.shift(1).fillna(False)
+
+    if valid_steps.any():
+        return df.loc[valid_steps, 'step_rate'].mean()
+    else:
+        return None
+
+fill_rate_baseline = compute_fill_rate_from_non_drain(cdf)
+
+if fill_rate_baseline is None or pd.isna(fill_rate_baseline):
+    st.info("Not enough non-drain data to compute a baseline fill rate.")
+else:
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Baseline Fill Rate (non-drain)", f"{fill_rate_baseline:.4f} units/min")
+    with col2:
+        daily_production = fill_rate_baseline * 1440  # 24 hours * 60 minutes
+        st.metric("Daily Production (24h)", f"{daily_production:.2f} units/day")
+
+if not intervals.empty:
+    pts = []
+    for _, row in intervals.iterrows():
+        duration = row['duration_mins']
+        net_rate = row['rate_of_change']
+        if fill_rate_baseline is None or pd.isna(fill_rate_baseline):
+            potion_removed = abs(row['oil_change'])
+            est_drain_rate = None
+        else:
+            est_drain_rate = fill_rate_baseline - net_rate
+            if est_drain_rate < 0:
+                est_drain_rate = 0
+            potion_removed = est_drain_rate * duration
+
+        pts.append(potion_removed)
+
+    intervals['potion_removed'] = pts
+
+    formatted_intervals = intervals.assign(
+        start_time=intervals['start_time'].dt.strftime('%Y-%m-%d %H:%M:%S'),
+        end_time=intervals['end_time'].dt.strftime('%Y-%m-%d %H:%M:%S'),
+        potion_removed=intervals['potion_removed']
+    )
+    formatted_intervals = formatted_intervals.round({
+        'duration_mins': 2,
+        'oil_change': 2,
+        'rate_of_change': 3,
+        'avg_probability': 3,
+        'max_probability': 3,
+        'potion_removed': 3
+    })
+
+    st.write("High-probability drain intervals with estimated potion removed:")
+    st.dataframe(formatted_intervals.style.background_gradient(
+        subset=['avg_probability', 'max_probability', 'potion_removed'],
+        cmap='Reds'
+    ))
+else:
+    st.info("No high-probability drain intervals available to compute potion removed.")
+
+st.subheader("Cauldron Interval Analysis")
+all_cauldron_stats = []
+
+for cauldron in combined['Cauldron_ID'].unique():
+    cauldron_data = combined[combined['Cauldron_ID'] == cauldron]
+    cauldron_intervals = detect_high_prob_intervals(cauldron_data)
+    if not cauldron_intervals.empty:
+        median_rate = cauldron_intervals['rate_of_change'].median()
+        all_cauldron_stats.append({
+            'Cauldron_ID': cauldron,
+            'Median_Rate_Change': abs(median_rate) if pd.notna(median_rate) else None,
+            'Total_Intervals': len(cauldron_intervals),
+            'Total_Duration': cauldron_intervals['duration_mins'].sum(),
+            'Avg_Probability': cauldron_intervals['avg_probability'].mean(),
+            'Max_Probability': cauldron_intervals['max_probability'].max()
+        })
+
+if all_cauldron_stats:
+    stats_df = pd.DataFrame(all_cauldron_stats)
+    
+    fig_stats = px.bar(
+        stats_df,
+        x='Cauldron_ID',
+        y='Median_Rate_Change',
+        color='Avg_Probability',
+        text='Total_Intervals',
+        title='Cauldron Interval Statistics',
+        labels={
+            'Median_Rate_Change': 'Median Rate of Change (units/min)', # this is the depletion rate
+            'Avg_Probability': 'Average Probability'
+        }
+    )
+    st.plotly_chart(fig_stats, use_container_width=True)
+    
+    st.write("Detailed Cauldron Statistics:")
+    st.dataframe(stats_df.round(3).style.background_gradient(
+        subset=['Avg_Probability', 'Max_Probability'],
+        cmap='Reds'
+    ))
+
+drain_fill_rows = []
+for cauldron in combined['Cauldron_ID'].unique():
+    cauldron_data = combined[combined['Cauldron_ID'] == cauldron]
+    if cauldron_data.empty:
+        continue
+    
+    if stats_df is not None and not stats_df.empty:
+        cauldron_stats = stats_df[stats_df['Cauldron_ID'] == cauldron]
+        drain_rate = float(cauldron_stats['Median_Rate_Change'].iloc[0]) if not cauldron_stats.empty else None
+    else:
+        drain_rate = None
+    
+    fill_rate = compute_fill_rate_from_non_drain(cauldron_data)
+    if fill_rate is not None and not pd.isna(fill_rate):
+        fill_rate = float(fill_rate)
+    else:
+        fill_rate = None
+    
+    drain_daily = drain_rate * 1440 if drain_rate is not None else None
+    fill_daily = fill_rate * 1440 if fill_rate is not None else None
+    
+    drain_fill_rows.append({
+        'Cauldron_ID': cauldron,
+        'Median_Rate_Change_units_per_min': drain_rate-fill_rate,
+        'Fill_Rate_units_per_min': fill_rate,
+        'Drain_Rate_units_per_day': drain_daily,
+        'Fill_Rate_units_per_day': fill_daily,
+    })
+
+if drain_fill_rows:
+    drain_fill_df = pd.DataFrame(drain_fill_rows)
+    drain_fill_df.to_csv('cauldron_drain_and_fill_rates.csv', index=False)
+    st.subheader('Export: Estimated Drain & Fill Rates')
+    st.write('A CSV with estimated per-cauldron drain and fill rates (per-minute and per-day) is available below:')
+    csv_data = drain_fill_df.to_csv(index=False)
+    st.download_button(label='Download Drain & Fill Rates CSV', data=csv_data, file_name='cauldron_drain_and_fill_rates.csv', mime='text/csv')
+
+st.subheader("Daily Production Analysis")
+daily_production_data = []
+
+for cauldron in combined['Cauldron_ID'].unique():
+    cauldron_data = combined[combined['Cauldron_ID'] == cauldron]
+    fill_rate = compute_fill_rate_from_non_drain(cauldron_data)
+    
+    if fill_rate is not None and not pd.isna(fill_rate):
+        daily_prod = fill_rate * 1440
+        daily_production_data.append({
+            'Cauldron_ID': cauldron,
+            'Daily_Production': daily_prod
+        })
+
+if daily_production_data:
+    production_df = pd.DataFrame(daily_production_data)
+    production_df = production_df.sort_values('Daily_Production', ascending=False)
+    
+    st.write("Daily Production by Cauldron (units/day):")
+    st.dataframe(production_df.round(2))
+    
+    fig_prod = px.bar(
+        production_df,
+        x='Cauldron_ID',
+        y='Daily_Production',
+        title='Daily Production by Cauldron',
+        labels={'Daily_Production': 'Daily Production (units/day)'}
+    )
+    st.plotly_chart(fig_prod, use_container_width=True)
+    
+    csv = production_df.to_csv(index=False)
+    st.download_button(
+        label="Download Daily Production Data (CSV)",
+        data=csv,
+        file_name="cauldron_daily_production.csv",
+        mime="text/csv"
+    )
+else:
+    st.info("No production data available for any cauldrons.")
+
+if st.session_state.last_update:
+    st.caption(f"Last Updated: {st.session_state.last_update.strftime('%Y-%m-%d %H:%M:%S')}")
+else:
+    st.caption("No data loaded yet.")
