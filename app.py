@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 import requests
 import streamlit as st
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
@@ -8,7 +7,6 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 import plotly.express as px
 import datetime as dt
-import time
 
 DATA_URL = "https://hackutd2025.eog.systems/api/Data"
 INFO_URL = "https://hackutd2025.eog.systems/api/Information/cauldrons"
@@ -32,19 +30,6 @@ def fetch_api_data():
             records.append({"Time": ts, "Cauldron_ID": cid, "Oil_Level": level})
     return pd.DataFrame(records)
 
-def simulate_data():
-    """Generate realistic simulated cauldron data for testing."""
-    times = pd.date_range(dt.datetime.now(), periods=300, freq="min")
-    cauldrons = [f"cauldron_{i:03d}" for i in range(1, 13)]
-    dfs = []
-    for cid in cauldrons:
-        base = 1000 + np.sin(np.linspace(0, 20, 300)) * 30 + np.random.randn(300) * 2
-        drains = np.where(np.random.rand(300) < 0.05, -np.random.rand(300) * 50, 0)
-        levels = base + np.cumsum(drains)
-        dfs.append(pd.DataFrame({"Time": times, "Cauldron_ID": cid, "Oil_Level": levels}))
-    return pd.concat(dfs)
-
-
 def compute_features(df, window=10):
     """Compute rolling stats and derived features for each cauldron."""
     df = df.sort_values(["Cauldron_ID", "Time"]).copy()
@@ -66,10 +51,12 @@ if st.button("Refresh Data"):
     with st.spinner("Fetching latest data..."):
         raw_df = fetch_api_data()
         if raw_df.empty or raw_df["Time"].nunique() < 15 or raw_df["Oil_Level"].nunique() <= 1:
-            st.warning("API not returning enough data, switching to simulated mode.")
-            raw_df = simulate_data()
-        st.session_state.data = raw_df
-        st.session_state.last_update = dt.datetime.now()
+            st.error("API did not return enough data to build predictions. Please try again later.")
+            st.session_state.data = None
+            st.session_state.last_update = None
+        else:
+            st.session_state.data = raw_df
+            st.session_state.last_update = dt.datetime.now()
 
 if st.session_state.data is None:
     st.info("Click 'Refresh Data' to load live readings.")
