@@ -4,11 +4,18 @@ import math
 import csv
 import heapq
 import requests
-import pandas as pd
 from collections import defaultdict
 from flask import Flask, jsonify
 
 app = Flask(__name__)
+
+# Enable CORS manually (in case flask-cors is not installed)
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 NUM_WITCHES = 6
 
@@ -550,4 +557,4 @@ if __name__ == '__main__':
         main()
     else:
         print("Starting API server...")
-        app.run(host='0.0.0.0', port=5000)
+        app.run(host='0.0.0.0', port=5005)

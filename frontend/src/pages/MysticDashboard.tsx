@@ -1,13 +1,14 @@
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
-import { Sparkles, AlertTriangle, Droplet, Flame, TrendingUp, Home, RefreshCw } from "lucide-react";
+import { Sparkles, AlertTriangle, Droplet, Flame, TrendingUp, Home, RefreshCw, Wand2 } from "lucide-react";
 import { FloatingParticles } from "@/components/FloatingParticles";
 import { ShimmerText } from "@/components/ShimmerText";
 import { NotificationBubble } from "@/components/NotificationBubble";
 import { GlassButton } from "@/components/ui/glass-button";
 import { OrbitalLoader } from "@/components/ui/orbital-loader";
 import { CauldronTimeSeriesChart } from "@/components/CauldronTimeSeriesChart";
-import { getDashboardStats, DashboardStats } from "@/services/api";
+import { WitchSchedule } from "@/components/WitchSchedule";
+import { getDashboardStats, DashboardStats, fetchWitchSchedule, WitchScheduleResponse } from "@/services/api";
 
 interface MysticDashboardProps {
   onBack?: () => void;
@@ -25,6 +26,8 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [selectedCauldron, setSelectedCauldron] = useState<string>("1");
+  const [witchSchedule, setWitchSchedule] = useState<WitchScheduleResponse | null>(null);
+  const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
 
   // Fetch dashboard data - memoized with useCallback
   const fetchData = useCallback(async (cauldronId: string) => {
@@ -39,6 +42,19 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
       console.error("Error fetching dashboard data:", error);
     } finally {
       setIsLoading(false);
+    }
+  }, []);
+
+  // Fetch witch schedule - memoized with useCallback
+  const fetchSchedule = useCallback(async () => {
+    setIsLoadingSchedule(true);
+    try {
+      const schedule = await fetchWitchSchedule();
+      setWitchSchedule(schedule);
+    } catch (error) {
+      console.error("Error fetching witch schedule:", error);
+    } finally {
+      setIsLoadingSchedule(false);
     }
   }, []);
 
@@ -65,10 +81,15 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
 
   useEffect(() => {
     fetchData(selectedCauldron);
+    fetchSchedule();
     // Auto-refresh every 2 minutes (120 seconds) instead of 30 seconds
     const interval = setInterval(() => fetchData(selectedCauldron), 120000);
-    return () => clearInterval(interval);
-  }, [selectedCauldron]);
+    const scheduleInterval = setInterval(() => fetchSchedule(), 300000); // Refresh schedule every 5 minutes
+    return () => {
+      clearInterval(interval);
+      clearInterval(scheduleInterval);
+    };
+  }, [selectedCauldron, fetchData, fetchSchedule]);
 
   useEffect(() => {
     // Reduce update frequency from 50ms to 100ms for better performance
@@ -303,6 +324,35 @@ export const MysticDashboard = ({ onBack }: MysticDashboardProps) => {
               >
                 ⭐
               </motion.div>
+            </div>
+          </motion.section>
+
+          {/* Witch Schedule Section */}
+          <motion.section
+            className="relative"
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1, delay: 0.7 }}
+          >
+            <FloatingParticles />
+            <div className="relative bg-gradient-to-br from-[#5C2E7E]/30 to-[#3A1F3D]/20 backdrop-blur-md border border-[#9B4CC2]/40 rounded-3xl p-10 shadow-2xl">
+              <div className="absolute -top-5 -left-5">
+                <motion.div
+                  animate={{ rotate: [0, 360] }}
+                  transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+                >
+                  <Wand2 className="w-14 h-14 text-[#9B4CC2]" />
+                </motion.div>
+              </div>
+
+              <div className="mb-6">
+                <ShimmerText>Witch Collection Schedule</ShimmerText>
+                <p className="text-[#E8C14B]/60 text-sm mt-2 font-light tracking-widest">
+                  Optimized route planning for potion collection across all cauldrons
+                </p>
+              </div>
+
+              <WitchSchedule scheduleData={witchSchedule} isLoading={isLoadingSchedule} />
             </div>
           </motion.section>
 

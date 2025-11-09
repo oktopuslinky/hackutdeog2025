@@ -8,6 +8,9 @@ const OVERFLOW_URL =
 const DRAIN_SERVER_URL =
   import.meta.env.VITE_DRAIN_SERVER_URL ??
   "http://localhost:5002"; // Drain detection server
+const WITCH_SCHEDULE_URL =
+  import.meta.env.VITE_WITCH_SCHEDULE_URL ??
+  "http://localhost:5005/api/schedule"; // Witch schedule server
 
 export interface CauldronLevel {
   timestamp: string;
@@ -61,6 +64,23 @@ export interface DashboardStats {
   availableCauldrons: string[];
   selectedCauldron?: string;
   overflowDebug: OverflowInterval[];
+}
+
+export interface WitchScheduleEntry {
+  witch_number: number;
+  time: number;
+  node: string;
+}
+
+export interface WitchScheduleResponse {
+  status: string;
+  schedule: WitchScheduleEntry[];
+  statistics: {
+    total_initial_production: number;
+    total_collected: number;
+    iterations: number;
+  };
+  message?: string;
 }
 
 function normalizeCauldronId(id?: string): string | undefined {
@@ -442,6 +462,46 @@ export async function fetchOverflowIntervals(): Promise<OverflowInterval[]> {
       console.error("Network error - is the backend running on", OVERFLOW_URL, "?");
     }
     return [];
+  }
+}
+
+// Fetch witch schedule from schedule server
+export async function fetchWitchSchedule(): Promise<WitchScheduleResponse | null> {
+  console.log("FETCHING WITCH SCHEDULE from:", WITCH_SCHEDULE_URL);
+  try {
+    const response = await fetch(WITCH_SCHEDULE_URL, {
+      method: "GET",
+      mode: "cors",
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+    
+    console.log("🧙 Witch Schedule API response status:", response.status, response.statusText);
+    
+    if (!response.ok) {
+      console.error(`Witch Schedule API failed: ${response.status} ${response.statusText}`);
+      const text = await response.text();
+      console.error("Response body:", text);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log("Witch Schedule API response data:", data);
+    
+    if (data?.status === "success" && Array.isArray(data.schedule)) {
+      console.log(`Received ${data.schedule.length} schedule entries`);
+      return data as WitchScheduleResponse;
+    }
+    
+    console.warn("Unexpected witch schedule response format:", data);
+    return null;
+  } catch (error) {
+    console.error("Error fetching witch schedule:", error);
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      console.error("Network error - is the schedule server running on", WITCH_SCHEDULE_URL, "?");
+    }
+    return null;
   }
 }
 
